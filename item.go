@@ -11,7 +11,7 @@ type Item struct {
 	idle         bool
 }
 
-func (i *Item) GetAdapter() *Object {
+func (i *Item) GetObject() *Object {
 	return i.object
 }
 
@@ -21,11 +21,11 @@ func (i *Item) Release() {
 }
 
 func (i *Item) Destroy() {
-	(*i.GetAdapter()).Destroy()
+	(*i.GetObject()).Destroy()
 }
 
 func (i *Item) isReadyForDestroy() bool {
 	expireTime := time.Now().Local().Add(i.pool.config.Lifetime)
 
-	return i.releasedTime.After(expireTime) || !(*i.GetAdapter()).IsActive()
+	return i.releasedTime.After(expireTime) || !(*i.GetObject()).IsActive()
 }
