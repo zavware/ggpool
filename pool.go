@@ -10,10 +10,10 @@ type Pool struct {
 	items                   chan *Item
 	poolLengthCounter       chan int
 	hasPending              chan bool
-	createItemError         chan error
+	createItemLastError     chan error
 	isClosed                bool
 	cleanUpTicker           *time.Ticker
-	checkInitCapacityTicker *time.Ticker
+	checkMinCapacityTicker  *time.Ticker
 }
 
 func New(config Config) (*Pool, error) {
@@ -28,16 +28,16 @@ func New(config Config) (*Pool, error) {
 		items:                   make(chan *Item, config.Capacity),
 		poolLengthCounter:       make(chan int, 1),
 		hasPending:              make(chan bool),
-		createItemError:         make(chan error),
+		createItemLastError:     make(chan error, 1),
 		isClosed:                false,
 		cleanUpTicker:           time.NewTicker(config.LifetimeCheckPeriod),
-		checkInitCapacityTicker: time.NewTicker(time.Duration(10 * time.Second)),
+		checkMinCapacityTicker:  time.NewTicker(time.Duration(10 * time.Second)),
 	}
 
 	p.poolLengthCounter <- 0
 
 	go func() { p.putPending() }()
-	go func() { p.checkInitCapacity() }()
+	go func() { p.checkMinCapacity() }()
 	go func() { p.cleanUp() }()
 
 	return p, nil
@@ -58,7 +58,7 @@ func (p *Pool) Get() (*Item, error) {
 	select {
 	case <-timeout:
 		err = errors.New("Timeout exceeded. Cannot get pool item.")
-	case err = <-p.createItemError:
+	case err = <-p.createItemLastError:
 		break
 	case item = <-p.items:
 		break
@@ -74,7 +74,7 @@ func (p *Pool) Len() int {
 func (p *Pool) Close() {
 	p.isClosed = true
 	p.cleanUpTicker.Stop()
-	p.checkInitCapacityTicker.Stop()
+	p.checkMinCapacityTicker.Stop()
 	close(p.hasPending)
 
 	p.destroyItems(true)
@@ -86,10 +86,12 @@ func (p *Pool) putPending() {
 
 		if len(p.items) == 0 && c < p.config.Capacity {
 			if item, err := p.createItem(); err == nil {
+				<- p.createItemLastError
 				p.items <- item
 				c++
 			} else {
-				p.createItemError <- err
+				<- p.createItemLastError
+				p.createItemLastError <- err
 			}
 		}
 
@@ -97,9 +99,9 @@ func (p *Pool) putPending() {
 	}
 }
 
-func (p *Pool) checkInitCapacity() {
-	for ; true; <-p.checkInitCapacityTicker.C {
-		p.updateInitCapacity()
+func (p *Pool) checkMinCapacity() {
+	for ; true; <-p.checkMinCapacityTicker.C {
+		p.keepMinCapacity()
 	}
 }
 
@@ -127,7 +129,7 @@ func (p *Pool) destroyItems(force bool) {
 
 	for len(p.items) > 0 {
 		item := <-p.items
-		if force || item.isReadyForDestroy() {
+		if force || item.isActive() {
 			p.poolLengthCounter <- <-p.poolLengthCounter - 1
 			item.Destroy()
 		} else {
@@ -140,7 +142,7 @@ func (p *Pool) destroyItems(force bool) {
 	}
 }
 
-func (p *Pool) updateInitCapacity() {
+func (p *Pool) keepMinCapacity() {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 
