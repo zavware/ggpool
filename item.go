@@ -24,8 +24,7 @@ func (i *Item) Destroy() {
 	(*i.GetObject()).Destroy()
 }
 
-func (i *Item) isReadyForDestroy() bool {
+func (i *Item) isActive() bool {
 	expireTime := time.Now().Local().Add(i.pool.config.Lifetime)
-
 	return i.releasedTime.After(expireTime) || !(*i.GetObject()).IsActive()
 }
