@@ -4,7 +4,7 @@ import "time"
 
 type Config struct {
 	Capacity            int
-	InitCapacity        int
+	MinCapacity         int
 	Lifetime            time.Duration
 	LifetimeCheckPeriod time.Duration
 	Timeout             time.Duration

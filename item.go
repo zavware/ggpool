@@ -8,7 +8,6 @@ type Item struct {
 	object       *Object
 	pool         *Pool
 	releasedTime time.Time
-	idle         bool
 }
 
 func (i *Item) GetObject() *Object {
@@ -26,5 +25,5 @@ func (i *Item) Destroy() {
 
 func (i *Item) isActive() bool {
 	expireTime := time.Now().Local().Add(i.pool.config.Lifetime)
-	return i.releasedTime.After(expireTime) || !(*i.GetObject()).IsActive()
+	return i.releasedTime.Before(expireTime) && (*i.GetObject()).IsActive()
 }
