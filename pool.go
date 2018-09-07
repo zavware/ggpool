@@ -46,7 +46,7 @@ func New(config Config) (*Pool, error) {
 		hasPendingNewItem:      make(chan bool),
 		createItemLastError:    make(chan error, 1),
 		isClosed:               false,
-		cleanUpTicker:          time.NewTicker(config.LifetimeCheckPeriod),
+		cleanUpTicker:          time.NewTicker(config.ItemLifetimeCheckPeriod),
 		checkMinCapacityTicker: time.NewTicker(time.Duration(10 * time.Second)),
 	}
 

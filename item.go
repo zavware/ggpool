@@ -24,6 +24,6 @@ func (i *Item) Destroy() {
 }
 
 func (i *Item) isActive() bool {
-	expireTime := time.Now().Local().Add(i.pool.config.Lifetime)
+	expireTime := time.Now().Local().Add(i.pool.config.ItemLifetime)
 	return i.releasedTime.Before(expireTime) && (*i.GetObject()).IsActive()
 }
