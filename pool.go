@@ -2,9 +2,12 @@ package ggpool
 
 import (
 	"errors"
+	"log"
 	"time"
 )
 
+//TimeoutError is temporary error
+//Can be catched by Temporary interface
 type TimeoutError struct {
 	err string
 }
@@ -17,13 +20,14 @@ func (e *TimeoutError) IsTemporary() bool {
 	return true
 }
 
+//Temporary is interface for temporary pool errors
 type Temporary interface {
 	IsTemporary() bool
 }
 
-type Pool struct {
+type pool struct {
 	config                 Config
-	items                  chan *Item
+	items                  chan *item
 	poolLengthCounter      chan int
 	hasPendingNewItem      chan bool
 	createItemLastError    chan error
@@ -32,16 +36,17 @@ type Pool struct {
 	checkMinCapacityTicker *time.Ticker
 }
 
-func New(config Config) (*Pool, error) {
-	var p *Pool
+//NewPool returns new pool instanse
+func NewPool(config Config) (*pool, error) {
+	var p *pool
 
 	if ok, err := p.validateConfig(config); ok != true {
 		return p, err
 	}
 
-	p = &Pool{
+	p = &pool{
 		config:                 config,
-		items:                  make(chan *Item, config.Capacity),
+		items:                  make(chan *item, config.Capacity),
 		poolLengthCounter:      make(chan int, 1),
 		hasPendingNewItem:      make(chan bool),
 		createItemLastError:    make(chan error, 1),
@@ -59,8 +64,8 @@ func New(config Config) (*Pool, error) {
 	return p, nil
 }
 
-func (p *Pool) Get() (*Item, error) {
-	var item *Item
+func (p *pool) Get() (*item, error) {
+	var item *item
 	var err error
 
 	if p.isClosed {
@@ -83,13 +88,13 @@ func (p *Pool) Get() (*Item, error) {
 	return item, err
 }
 
-func (p *Pool) Len() int {
+func (p *pool) Len() int {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 	return c
 }
 
-func (p *Pool) Close() {
+func (p *pool) Close() {
 	p.isClosed = true
 	p.cleanUpTicker.Stop()
 	p.checkMinCapacityTicker.Stop()
@@ -98,7 +103,7 @@ func (p *Pool) Close() {
 	p.destroyItems(true)
 }
 
-func (p *Pool) putPending() {
+func (p *pool) putPending() {
 	for <-p.hasPendingNewItem {
 		c := <-p.poolLengthCounter
 
@@ -117,24 +122,25 @@ func (p *Pool) putPending() {
 	}
 }
 
-func (p *Pool) checkMinCapacity() {
+func (p *pool) checkMinCapacity() {
 	for ; true; <-p.checkMinCapacityTicker.C {
 		p.keepMinCapacity()
 	}
 }
 
-func (p *Pool) cleanUp() {
+func (p *pool) cleanUp() {
 	for range p.cleanUpTicker.C {
 		p.destroyItems(false)
 	}
 }
 
-func (p *Pool) createItem() (*Item, error) {
+func (p *pool) createItem() (*item, error) {
 	if object, err := p.config.Factory.Create(); err == nil {
-		item := &Item{
-			object:       &object,
+		item := &item{
+			object:       object,
 			pool:         p,
 			releasedTime: time.Now().UTC(),
+			clock:        realClock{},
 		}
 		return item, nil
 	} else {
@@ -142,14 +148,21 @@ func (p *Pool) createItem() (*Item, error) {
 	}
 }
 
-func (p *Pool) destroyItems(force bool) {
-	var itemsBuffer []*Item
+func (p *pool) destroyItems(force bool) {
+	var itemsBuffer []*item
 
 	for len(p.items) > 0 {
 		item := <-p.items
 		if force || !item.isActive() {
 			p.poolLengthCounter <- <-p.poolLengthCounter - 1
-			item.Destroy()
+			if ok, err := item.Destroy(); !ok {
+				/**
+					TODO: what can I do with this error?
+					Maybe create a public method of pool GetDestroyError
+					which will return Destroy object error?
+				**/
+				log.Print(err)
+			}
 		} else {
 			itemsBuffer = append(itemsBuffer, item)
 		}
@@ -160,7 +173,7 @@ func (p *Pool) destroyItems(force bool) {
 	}
 }
 
-func (p *Pool) keepMinCapacity() {
+func (p *pool) keepMinCapacity() {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 
@@ -171,7 +184,7 @@ func (p *Pool) keepMinCapacity() {
 	}
 }
 
-func (p *Pool) validateConfig(config Config) (bool, error) {
+func (p *pool) validateConfig(config Config) (bool, error) {
 	res := true
 	var err error
 

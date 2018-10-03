@@ -1,29 +1,28 @@
 package ggpool
 
-import (
-	"time"
-)
+import "time"
 
-type Item struct {
-	object       *Object
-	pool         *Pool
+type item struct {
+	object       Object
+	pool         *pool
 	releasedTime time.Time
+	clock        clock
 }
 
-func (i *Item) GetObject() *Object {
+func (i *item) GetObject() Object {
 	return i.object
 }
 
-func (i *Item) Release() {
-	i.releasedTime = time.Now().UTC()
+func (i *item) Release() {
+	i.releasedTime = i.clock.Now().UTC()
 	i.pool.items <- i
 }
 
-func (i *Item) Destroy() {
-	(*i.GetObject()).Destroy()
+func (i *item) Destroy() (bool, error) {
+	return (i.GetObject()).Destroy()
 }
 
-func (i *Item) isActive() bool {
-	expireTime := time.Now().Local().Add(i.pool.config.ItemLifetime)
-	return i.releasedTime.Before(expireTime) && (*i.GetObject()).IsActive()
+func (i *item) isActive() bool {
+	expireTime := i.clock.Now().Local().Add(i.pool.config.ItemLifetime)
+	return i.releasedTime.Before(expireTime) && (i.GetObject()).IsActive()
 }
