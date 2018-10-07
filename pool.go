@@ -2,7 +2,6 @@ package ggpool
 
 import (
 	"errors"
-	"log"
 	"time"
 )
 
@@ -49,7 +48,6 @@ func NewPool(config Config) (*pool, error) {
 		items:                  make(chan *item, config.Capacity),
 		poolLengthCounter:      make(chan int, 1),
 		hasPendingNewItem:      make(chan bool),
-		createItemLastError:    make(chan error, 1),
 		isClosed:               false,
 		cleanUpTicker:          time.NewTicker(config.ItemLifetimeCheckPeriod),
 		checkMinCapacityTicker: time.NewTicker(time.Duration(10 * time.Second)),
@@ -109,11 +107,12 @@ func (p *pool) putPending() {
 
 		if len(p.items) == 0 && c < p.config.Capacity {
 			if item, err := p.createItem(); err == nil {
-				<-p.createItemLastError
+				p.createItemLastError = nil
 				p.items <- item
 				c++
 			} else {
-				<-p.createItemLastError
+				p.createItemLastError = nil
+				p.createItemLastError = make(chan error, 1)
 				p.createItemLastError <- err
 			}
 		}
@@ -137,7 +136,7 @@ func (p *pool) cleanUp() {
 func (p *pool) createItem() (*item, error) {
 	if object, err := p.config.Factory.Create(); err == nil {
 		item := &item{
-			object:       object,
+			object:       &object,
 			pool:         p,
 			releasedTime: time.Now().UTC(),
 			clock:        realClock{},
@@ -155,14 +154,7 @@ func (p *pool) destroyItems(force bool) {
 		item := <-p.items
 		if force || !item.isActive() {
 			p.poolLengthCounter <- <-p.poolLengthCounter - 1
-			if ok, err := item.Destroy(); !ok {
-				/**
-					TODO: what can I do with this error?
-					Maybe create a public method of pool GetDestroyError
-					which will return Destroy object error?
-				**/
-				log.Print(err)
-			}
+			item.Destroy()
 		} else {
 			itemsBuffer = append(itemsBuffer, item)
 		}

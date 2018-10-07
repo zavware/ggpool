@@ -1,5 +1,5 @@
 package ggpool
 
 type Creator interface {
-	Create() (Object, error)
+	Create() (interface{}, error)
 }
