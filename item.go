@@ -19,10 +19,10 @@ func (i *item) Release() {
 }
 
 func (i *item) Destroy() {
-	(*i.GetObject()).(Object).Destroy()
+	(*i.object).(Object).Destroy()
 }
 
 func (i *item) isActive() bool {
 	expireTime := i.clock.Now().UTC().Add(i.pool.config.ItemLifetime)
-	return i.releasedTime.Before(expireTime) && (*i.GetObject()).(Object).IsActive()
+	return i.releasedTime.Before(expireTime) && (*i.object).(Object).IsActive()
 }

@@ -2,6 +2,7 @@ package ggpool
 
 import (
 	"errors"
+	"reflect"
 	"time"
 )
 
@@ -15,6 +16,7 @@ func (e *TimeoutError) Error() string {
 	return e.err
 }
 
+//IsTemporary says that TimeoutError is temporary error
 func (e *TimeoutError) IsTemporary() bool {
 	return true
 }
@@ -35,8 +37,15 @@ type pool struct {
 	checkMinCapacityTicker *time.Ticker
 }
 
+//Pool is interface of pool availabel methods
+type Pool interface {
+	Get() (*item, error)
+	Len() int
+	Close()
+}
+
 //NewPool returns new pool instanse
-func NewPool(config Config) (*pool, error) {
+func NewPool(config Config) (Pool, error) {
 	var p *pool
 
 	if ok, err := p.validateConfig(config); ok != true {
@@ -62,6 +71,7 @@ func NewPool(config Config) (*pool, error) {
 	return p, nil
 }
 
+//Get returns pool item or error of item getting/creation
 func (p *pool) Get() (*item, error) {
 	var item *item
 	var err error
@@ -86,12 +96,14 @@ func (p *pool) Get() (*item, error) {
 	return item, err
 }
 
+//Len returns pool length
 func (p *pool) Len() int {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 	return c
 }
 
+//Close closes and clears pool
 func (p *pool) Close() {
 	p.isClosed = true
 	p.cleanUpTicker.Stop()
@@ -134,17 +146,31 @@ func (p *pool) cleanUp() {
 }
 
 func (p *pool) createItem() (*item, error) {
-	if object, err := p.config.Factory.Create(); err == nil {
-		item := &item{
-			object:       &object,
-			pool:         p,
-			releasedTime: time.Now().UTC(),
-			clock:        realClock{},
-		}
-		return item, nil
-	} else {
-		return nil, err
+	var res *item
+	var err error
+
+	object, err := p.config.Factory.Create()
+
+	if err != nil {
+		return res, err
 	}
+
+	if reflect.ValueOf(object).Kind() != reflect.Ptr {
+		return res, errors.New("ggpool.Config.Factory must return object pointer")
+	}
+
+	if _, ok := object.(Object); !ok {
+		return res, errors.New("ggpool.Config.Factory must create object which implement ggpool.Object interface")
+	}
+
+	res = &item{
+		object:       &object,
+		pool:         p,
+		releasedTime: time.Now().UTC(),
+		clock:        realClock{},
+	}
+
+	return res, err
 }
 
 func (p *pool) destroyItems(force bool) {
