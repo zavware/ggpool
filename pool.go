@@ -1,6 +1,7 @@
 package ggpool
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"time"
@@ -27,17 +28,16 @@ type Temporary interface {
 }
 
 type pool struct {
-	config                 Config
-	items                  chan *item
-	poolLengthCounter      chan int
-	hasPendingNewItem      chan bool
-	createItemLastError    chan error
-	isClosed               bool
-	cleanUpTicker          *time.Ticker
-	checkMinCapacityTicker *time.Ticker
+	config              Config
+	items               chan *item
+	poolLengthCounter   chan int
+	hasPendingNewItem   chan bool
+	createItemLastError chan error
+	ctx                 context.Context
+	cancel              context.CancelFunc
 }
 
-//Pool is interface of pool availabel methods
+//Pool is interface of pool available methods
 type Pool interface {
 	Get() (*item, error)
 	Len() int
@@ -45,21 +45,22 @@ type Pool interface {
 }
 
 //NewPool returns new pool instanse
-func NewPool(config Config) (Pool, error) {
+func NewPool(ctx context.Context, config Config) (Pool, error) {
 	var p *pool
 
 	if ok, err := p.validateConfig(config); ok != true {
 		return p, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	p = &pool{
-		config:                 config,
-		items:                  make(chan *item, config.Capacity),
-		poolLengthCounter:      make(chan int, 1),
-		hasPendingNewItem:      make(chan bool),
-		isClosed:               false,
-		cleanUpTicker:          time.NewTicker(config.ItemLifetimeCheckPeriod),
-		checkMinCapacityTicker: time.NewTicker(time.Duration(10 * time.Second)),
+		config:            config,
+		items:             make(chan *item, config.Capacity),
+		poolLengthCounter: make(chan int, 1),
+		hasPendingNewItem: make(chan bool),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 
 	p.poolLengthCounter <- 0
@@ -76,7 +77,7 @@ func (p *pool) Get() (*item, error) {
 	var item *item
 	var err error
 
-	if p.isClosed {
+	if p.ctx.Err() == context.Canceled {
 		err = errors.New("pool is closed")
 		return nil, err
 	}
@@ -105,43 +106,62 @@ func (p *pool) Len() int {
 
 //Close closes and clears pool
 func (p *pool) Close() {
-	p.isClosed = true
-	p.cleanUpTicker.Stop()
-	p.checkMinCapacityTicker.Stop()
-	close(p.hasPendingNewItem)
-
+	p.cancel()
 	p.destroyItems(true)
 }
 
 func (p *pool) putPending() {
-	for <-p.hasPendingNewItem {
-		c := <-p.poolLengthCounter
-
-		if len(p.items) == 0 && c < p.config.Capacity {
-			if item, err := p.createItem(); err == nil {
-				p.createItemLastError = nil
-				p.items <- item
-				c++
-			} else {
-				p.createItemLastError = nil
-				p.createItemLastError = make(chan error, 1)
-				p.createItemLastError <- err
+	for {
+		select {
+		case <-p.hasPendingNewItem:
+			c := <-p.poolLengthCounter
+			if len(p.items) == 0 && c < p.config.Capacity {
+				if item, err := p.createItem(); err == nil {
+					p.createItemLastError = nil
+					p.items <- item
+					c++
+				} else {
+					p.createItemLastError = nil
+					p.createItemLastError = make(chan error, 1)
+					p.createItemLastError <- err
+				}
 			}
-		}
 
-		p.poolLengthCounter <- c
+			p.poolLengthCounter <- c
+
+		case <-p.ctx.Done():
+			return
+		}
 	}
 }
 
 func (p *pool) checkMinCapacity() {
-	for ; true; <-p.checkMinCapacityTicker.C {
-		p.keepMinCapacity()
+	ticker := time.NewTicker(time.Duration(10 * time.Second))
+	defer ticker.Stop()
+
+	p.keepMinCapacity()
+
+	for {
+		select {
+		case <-ticker.C:
+			p.keepMinCapacity()
+		case <-p.ctx.Done():
+			return
+		}
 	}
 }
 
 func (p *pool) cleanUp() {
-	for range p.cleanUpTicker.C {
-		p.destroyItems(false)
+	ticker := time.NewTicker(p.config.ItemLifetimeCheckPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			p.destroyItems(false)
+		case <-p.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -149,7 +169,7 @@ func (p *pool) createItem() (*item, error) {
 	var res *item
 	var err error
 
-	object, err := p.config.Factory.Create()
+	object, err := p.config.Factory.Create(p.ctx)
 
 	if err != nil {
 		return res, err
@@ -167,7 +187,6 @@ func (p *pool) createItem() (*item, error) {
 		object:       &object,
 		pool:         p,
 		releasedTime: time.Now().UTC(),
-		clock:        realClock{},
 	}
 
 	return res, err
