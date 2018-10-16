@@ -1,3 +1,4 @@
+//Package ggpool provides functionality of simple generic objects pool
 package ggpool
 
 import (
@@ -7,29 +8,10 @@ import (
 	"time"
 )
 
-//TimeoutError is temporary error
-//Can be catched by Temporary interface
-type TimeoutError struct {
-	err string
-}
-
-func (e *TimeoutError) Error() string {
-	return e.err
-}
-
-//IsTemporary says that TimeoutError is temporary error
-func (e *TimeoutError) IsTemporary() bool {
-	return true
-}
-
-//Temporary is interface for temporary pool errors
-type Temporary interface {
-	IsTemporary() bool
-}
-
-type pool struct {
+//Pool is a pool of generic objects
+type Pool struct {
 	config              Config
-	items               chan *item
+	items               chan *Item
 	poolLengthCounter   chan int
 	hasPendingNewItem   chan bool
 	createItemLastError chan error
@@ -37,16 +19,9 @@ type pool struct {
 	cancel              context.CancelFunc
 }
 
-//Pool is interface of pool available methods
-type Pool interface {
-	Get() (*item, error)
-	Len() int
-	Close()
-}
-
-//NewPool returns new pool instanse
-func NewPool(ctx context.Context, config Config) (Pool, error) {
-	var p *pool
+//NewPool returns a new Pool instanse
+func NewPool(ctx context.Context, config Config) (*Pool, error) {
+	var p *Pool
 
 	if ok, err := p.validateConfig(config); ok != true {
 		return p, err
@@ -54,9 +29,9 @@ func NewPool(ctx context.Context, config Config) (Pool, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	p = &pool{
+	p = &Pool{
 		config:            config,
-		items:             make(chan *item, config.Capacity),
+		items:             make(chan *Item, config.Capacity),
 		poolLengthCounter: make(chan int, 1),
 		hasPendingNewItem: make(chan bool),
 		ctx:               ctx,
@@ -72,9 +47,9 @@ func NewPool(ctx context.Context, config Config) (Pool, error) {
 	return p, nil
 }
 
-//Get returns pool item or error of item getting/creation
-func (p *pool) Get() (*item, error) {
-	var item *item
+//Get returns Item or error of Item getting/creation
+func (p *Pool) Get() (*Item, error) {
+	var item *Item
 	var err error
 
 	if p.ctx.Err() == context.Canceled {
@@ -97,20 +72,20 @@ func (p *pool) Get() (*item, error) {
 	return item, err
 }
 
-//Len returns pool length
-func (p *pool) Len() int {
+//Len returns pool current length
+func (p *Pool) Len() int {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 	return c
 }
 
-//Close closes and clears pool
-func (p *pool) Close() {
+//Close clears and closes pool
+func (p *Pool) Close() {
 	p.cancel()
 	p.destroyItems(true)
 }
 
-func (p *pool) putPending() {
+func (p *Pool) putPending() {
 	for {
 		select {
 		case <-p.hasPendingNewItem:
@@ -135,7 +110,7 @@ func (p *pool) putPending() {
 	}
 }
 
-func (p *pool) checkMinCapacity() {
+func (p *Pool) checkMinCapacity() {
 	ticker := time.NewTicker(time.Duration(10 * time.Second))
 	defer ticker.Stop()
 
@@ -151,7 +126,7 @@ func (p *pool) checkMinCapacity() {
 	}
 }
 
-func (p *pool) cleanUp() {
+func (p *Pool) cleanUp() {
 	ticker := time.NewTicker(p.config.ItemLifetimeCheckPeriod)
 	defer ticker.Stop()
 
@@ -165,41 +140,41 @@ func (p *pool) cleanUp() {
 	}
 }
 
-func (p *pool) createItem() (*item, error) {
-	var res *item
+func (p *Pool) createItem() (*Item, error) {
+	var item *Item
 	var err error
 
 	object, err := p.config.Factory.Create(p.ctx)
 
 	if err != nil {
-		return res, err
+		return item, err
 	}
 
 	if reflect.ValueOf(object).Kind() != reflect.Ptr {
-		return res, errors.New("ggpool.Config.Factory must return object pointer")
+		return item, errors.New("ggpool.Config.Factory must return object pointer")
 	}
 
 	if _, ok := object.(Object); !ok {
-		return res, errors.New("ggpool.Config.Factory must create object which implement ggpool.Object interface")
+		return item, errors.New("ggpool.Config.Factory must create object which implement ggpool.Object interface")
 	}
 
-	res = &item{
+	item = &Item{
 		object:       &object,
 		pool:         p,
 		releasedTime: time.Now().UTC(),
 	}
 
-	return res, err
+	return item, err
 }
 
-func (p *pool) destroyItems(force bool) {
-	var itemsBuffer []*item
+func (p *Pool) destroyItems(force bool) {
+	var itemsBuffer []*Item
 
 	for len(p.items) > 0 {
 		item := <-p.items
 		if force || !item.isActive() {
 			p.poolLengthCounter <- <-p.poolLengthCounter - 1
-			item.Destroy()
+			item.destroy()
 		} else {
 			itemsBuffer = append(itemsBuffer, item)
 		}
@@ -210,7 +185,7 @@ func (p *pool) destroyItems(force bool) {
 	}
 }
 
-func (p *pool) keepMinCapacity() {
+func (p *Pool) keepMinCapacity() {
 	c := <-p.poolLengthCounter
 	p.poolLengthCounter <- c
 
@@ -221,7 +196,7 @@ func (p *pool) keepMinCapacity() {
 	}
 }
 
-func (p *pool) validateConfig(config Config) (bool, error) {
+func (p *Pool) validateConfig(config Config) (bool, error) {
 	res := true
 	var err error
 
