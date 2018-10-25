@@ -1,6 +1,9 @@
 package ggpool
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Config is a pool configuration
 type Config struct {
@@ -8,10 +11,10 @@ type Config struct {
 	Capacity int
 
 	//Pool keeps this number of objects ready for use.
-	//If Item is destroyed and pool length less than MinCapacity then new Item will be created automatically.
+	//If Item is destroyed and pool length less than MinCapacity then new Object will be created automatically.
 	MinCapacity int
 
-	//Duration of pool Item lifetime.
+	//Duration of pool Object lifetime.
 	//When the object lifetime expires method Object.Destroy() is called.
 	ItemLifetime time.Duration
 
@@ -24,6 +27,25 @@ type Config struct {
 	Timeout time.Duration
 
 	//Factory of pool Objects.
-	//The Objects are wrapped by Item and can be obtained by Item.GetObject().
 	Factory Creator
+}
+
+func (c Config) validate() error {
+	var err error
+
+	if c.Capacity < 1 {
+		err = errors.New("pool capacity value must be more then 0")
+	}
+
+	if c.MinCapacity < 0 {
+		err = errors.New("min pool capacity value must not be negative")
+	}
+
+	if c.Capacity < c.MinCapacity {
+		err = errors.New("pool capacity value cannot be less then init capacity value")
+	}
+
+	//@TODO to add validation for ItemLifetime, ItemLifetimeCheckPeriod, Timeout
+
+	return err
 }

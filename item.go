@@ -2,29 +2,29 @@ package ggpool
 
 import "time"
 
-//Item is wrapper of pool Object
-type Item struct {
+type item struct {
 	object       *interface{}
-	pool         *Pool
+	lifetime     time.Duration
 	releasedTime time.Time
 }
 
-//GetObject returns Object
-func (i *Item) GetObject() *interface{} {
-	return i.object
+func newItem(object *interface{}, lifetime time.Duration) *item {
+	return &item{
+		object:       object,
+		lifetime:     lifetime,
+		releasedTime: time.Now().UTC(),
+	}
 }
 
-//Release puts Item back to Pool
-func (i *Item) Release() {
+func (i *item) release() {
 	i.releasedTime = time.Now().UTC()
-	i.pool.items <- i
 }
 
-func (i *Item) destroy() {
+func (i *item) destroy() {
 	(*i.object).(Object).Destroy()
 }
 
-func (i *Item) isActive() bool {
-	expireTime := time.Now().UTC().Add(i.pool.config.ItemLifetime)
-	return i.releasedTime.Before(expireTime) && (*i.object).(Object).IsActive()
+func (i *item) isActive() bool {
+	expireTime := time.Now().UTC().Add(i.lifetime)
+	return i.releasedTime.Before(expireTime)
 }

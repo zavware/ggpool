@@ -10,122 +10,195 @@ import (
 
 //Pool is a pool of generic objects
 type Pool struct {
-	config              Config
-	items               chan *Item
-	poolLengthCounter   chan int
-	hasPendingNewItem   chan bool
-	createItemLastError chan error
-	ctx                 context.Context
-	cancel              context.CancelFunc
+	config                Config
+	itemCollection        *collection
+	itemReleasedCh        chan bool
+	hasPendingNewItemCh   chan bool
+	createItemLastErrorCh chan error
+	ctx                   context.Context
+	cancel                context.CancelFunc
 }
 
 //NewPool returns a new Pool instanse
 func NewPool(ctx context.Context, config Config) (*Pool, error) {
 	var p *Pool
 
-	if ok, err := p.validateConfig(config); ok != true {
+	if err := config.validate(); err != nil {
 		return p, err
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 
 	p = &Pool{
-		config:            config,
-		items:             make(chan *Item, config.Capacity),
-		poolLengthCounter: make(chan int, 1),
-		hasPendingNewItem: make(chan bool),
-		ctx:               ctx,
-		cancel:            cancel,
+		config:                config,
+		itemCollection:        newCollection(),
+		itemReleasedCh:        make(chan bool),
+		hasPendingNewItemCh:   make(chan bool),
+		createItemLastErrorCh: make(chan error),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	p.poolLengthCounter <- 0
-
 	go func() { p.putPending() }()
-	go func() { p.checkMinCapacity() }()
+	go func() { p.keepMinCapacity() }()
 	go func() { p.cleanUp() }()
 
 	return p, nil
 }
 
-//Get returns Item or error of Item getting/creation
-func (p *Pool) Get() (*Item, error) {
-	var item *Item
-	var err error
-
+//Get returns Object or error of Object getting/creation
+func (p *Pool) Get() (*interface{}, error) {
 	if p.ctx.Err() == context.Canceled {
-		err = errors.New("pool is closed")
-		return nil, err
+		return nil, errors.New("pool is closed")
 	}
 
-	timeout := time.After(p.config.Timeout)
-	p.hasPendingNewItem <- true
+	item, err := p.getIdleItemWithTimeout(p.config.Timeout)
+
+	if err != nil {
+		return nil, err
+	}
+	return item.object, err
+}
+
+//Release puts Object back to Pool
+func (p *Pool) Release(object *interface{}) {
+	key := getObjectKey(object)
+	item := p.itemCollection.get(key)
+
+	if item != nil {
+		item.release()
+		p.itemCollection.release(key)
+
+		select {
+		case p.itemReleasedCh <- true:
+			break
+		default:
+			break
+		}
+	}
+}
+
+//Destroy removes and destroys Pool Object
+func (p *Pool) Destroy(object *interface{}) {
+	key := getObjectKey(object)
+	item := p.itemCollection.get(key)
+
+	if item != nil {
+		item.destroy()
+		p.itemCollection.remove(key)
+	}
+}
+
+//Len returns pool current length
+func (p *Pool) Len() int {
+	return p.itemCollection.len()
+}
+
+//Close clears and closes pool
+func (p *Pool) Close() {
+	p.cancel()
+
+	items := p.itemCollection.getAll()
+	for _, item := range items {
+		go item.destroy()
+	}
+}
+
+func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
+	timeoutCtx, cancel := context.WithTimeout(p.ctx, timeout)
+	defer cancel()
+
+	itemCh := make(chan *item)
+	errCh := make(chan error)
+
+	//waiting for idle item
+	go func() {
+		//try to acquire item immediately
+		if item := p.itemCollection.acquire(); item != nil {
+			itemCh <- item
+			return
+		}
+		p.hasPendingNewItemCh <- true
+
+		//waiting for idle item or timeout
+		for {
+			select {
+			case <-timeoutCtx.Done():
+				errCh <- &TimeoutError{"timeout exceeded - cannot get pool item"}
+				return
+			case err := <-p.createItemLastErrorCh:
+				errCh <- err
+				return
+			case <-p.itemReleasedCh:
+				if item := p.itemCollection.acquire(); item != nil {
+					itemCh <- item
+					return
+				}
+				p.hasPendingNewItemCh <- true
+			}
+		}
+	}()
+
+	var item *item
+	var err error
 
 	select {
-	case <-timeout:
-		err = &TimeoutError{"timeout exceeded - cannot get pool item"}
-	case err = <-p.createItemLastError:
+	case item = <-itemCh:
 		break
-	case item = <-p.items:
+	case err = <-errCh:
 		break
 	}
 
 	return item, err
 }
 
-//Len returns pool current length
-func (p *Pool) Len() int {
-	c := <-p.poolLengthCounter
-	p.poolLengthCounter <- c
-	return c
-}
-
-//Close clears and closes pool
-func (p *Pool) Close() {
-	p.cancel()
-	p.destroyItems(true)
-}
-
 func (p *Pool) putPending() {
 	for {
 		select {
-		case <-p.hasPendingNewItem:
-			c := <-p.poolLengthCounter
-			if len(p.items) == 0 && c < p.config.Capacity {
+		case <-p.hasPendingNewItemCh:
+			if p.itemCollection.len() < p.config.Capacity {
 				if item, err := p.createItem(); err == nil {
-					p.createItemLastError = nil
-					p.items <- item
-					c++
+					for len(p.createItemLastErrorCh) > 0 {
+						<-p.createItemLastErrorCh
+					}
+
+					p.itemCollection.put(getObjectKey(item.object), item)
+					p.Release(item.object)
 				} else {
-					p.createItemLastError = nil
-					p.createItemLastError = make(chan error, 1)
-					p.createItemLastError <- err
+					p.createItemLastErrorCh <- err
 				}
 			}
-
-			p.poolLengthCounter <- c
-
 		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
-func (p *Pool) checkMinCapacity() {
+func (p *Pool) keepMinCapacity() {
 	ticker := time.NewTicker(time.Duration(10 * time.Second))
 	defer ticker.Stop()
 
-	p.keepMinCapacity()
+	keepMinCapacity := func() {
+		delta := p.config.MinCapacity - p.itemCollection.len()
+
+		for i := 0; i < delta; i++ {
+			p.hasPendingNewItemCh <- true
+		}
+	}
+
+	keepMinCapacity()
 
 	for {
 		select {
 		case <-ticker.C:
-			p.keepMinCapacity()
+			keepMinCapacity()
 		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
+//cleanUp clears inactive pool elements
 func (p *Pool) cleanUp() {
 	ticker := time.NewTicker(p.config.ItemLifetimeCheckPeriod)
 	defer ticker.Stop()
@@ -133,87 +206,36 @@ func (p *Pool) cleanUp() {
 	for {
 		select {
 		case <-ticker.C:
-			p.destroyItems(false)
+			for _, item := range p.itemCollection.acquireAll() {
+				if item.isActive() {
+					p.Release(item.object)
+				} else {
+					p.itemCollection.remove(getObjectKey(item.object))
+					go item.destroy()
+				}
+			}
 		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
-func (p *Pool) createItem() (*Item, error) {
-	var item *Item
+func (p *Pool) createItem() (*item, error) {
 	var err error
 
 	object, err := p.config.Factory.Create(p.ctx)
 
 	if err != nil {
-		return item, err
+		return nil, err
 	}
 
 	if reflect.ValueOf(object).Kind() != reflect.Ptr {
-		return item, errors.New("ggpool.Config.Factory must return object pointer")
+		return nil, errors.New("ggpool.Config.Factory must return object pointer")
 	}
 
 	if _, ok := object.(Object); !ok {
-		return item, errors.New("ggpool.Config.Factory must create object which implement ggpool.Object interface")
+		return nil, errors.New("ggpool.Config.Factory must create object which implement ggpool.Object interface")
 	}
 
-	item = &Item{
-		object:       &object,
-		pool:         p,
-		releasedTime: time.Now().UTC(),
-	}
-
-	return item, err
-}
-
-func (p *Pool) destroyItems(force bool) {
-	var itemsBuffer []*Item
-
-	for len(p.items) > 0 {
-		item := <-p.items
-		if force || !item.isActive() {
-			p.poolLengthCounter <- <-p.poolLengthCounter - 1
-			item.destroy()
-		} else {
-			itemsBuffer = append(itemsBuffer, item)
-		}
-	}
-
-	for _, item := range itemsBuffer {
-		p.items <- item
-	}
-}
-
-func (p *Pool) keepMinCapacity() {
-	c := <-p.poolLengthCounter
-	p.poolLengthCounter <- c
-
-	delta := p.config.MinCapacity - c
-
-	for i := 0; i < delta; i++ {
-		p.hasPendingNewItem <- true
-	}
-}
-
-func (p *Pool) validateConfig(config Config) (bool, error) {
-	res := true
-	var err error
-
-	if config.Capacity < 1 {
-		res = false
-		err = errors.New("pool capacity value must be more then 0")
-	}
-
-	if config.MinCapacity < 0 {
-		res = false
-		err = errors.New("min pool capacity value must not be negative")
-	}
-
-	if config.Capacity < config.MinCapacity {
-		res = false
-		err = errors.New("pool capacity value cannot be less then init capacity value")
-	}
-
-	return res, err
+	return newItem(&object, p.config.ItemLifetime), err
 }

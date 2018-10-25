@@ -55,18 +55,16 @@ func Example() {
 		return
 	}
 
-	item, err := pool.Get()
+	obj, err := pool.Get()
 
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	obj := item.GetObject()
-
 	connection := (*obj).(*Connection)
 	connection.RunCommand()
 
-	item.Release()
+	pool.Release(obj)
 	pool.Close()
 }
