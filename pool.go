@@ -5,18 +5,21 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"time"
 )
 
 //Pool is a pool of generic objects
 type Pool struct {
 	config                Config
-	itemCollection        *collection
 	itemReleasedCh        chan bool
 	hasPendingNewItemCh   chan bool
 	createItemLastErrorCh chan error
 	ctx                   context.Context
 	cancel                context.CancelFunc
+
+	sync.RWMutex
+	itemCollection *collection
 }
 
 //NewPool returns a new Pool instanse
@@ -39,7 +42,6 @@ func NewPool(ctx context.Context, config Config) (*Pool, error) {
 		cancel: cancel,
 	}
 
-	go func() { p.putPending() }()
 	go func() { p.keepMinCapacity() }()
 	go func() { p.cleanUp() }()
 
@@ -118,7 +120,7 @@ func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
 			itemCh <- item
 			return
 		}
-		p.hasPendingNewItemCh <- true
+		go p.putItem()
 
 		//waiting for idle item or timeout
 		for {
@@ -134,7 +136,7 @@ func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
 					itemCh <- item
 					return
 				}
-				p.hasPendingNewItemCh <- true
+				go p.putItem()
 			}
 		}
 	}()
@@ -152,24 +154,25 @@ func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
 	return item, err
 }
 
-func (p *Pool) putPending() {
-	for {
-		select {
-		case <-p.hasPendingNewItemCh:
-			if p.itemCollection.len() < p.config.Capacity {
-				if item, err := p.createItem(); err == nil {
-					for len(p.createItemLastErrorCh) > 0 {
-						<-p.createItemLastErrorCh
-					}
+func (p *Pool) putItem() {
+	p.Lock()
+	defer p.Unlock()
 
-					p.itemCollection.put(getObjectKey(item.object), item)
-					p.Release(item.object)
-				} else {
-					p.createItemLastErrorCh <- err
-				}
+	if p.itemCollection.len() < p.config.Capacity {
+		if item, err := p.createItem(); err == nil {
+			for len(p.createItemLastErrorCh) > 0 {
+				<-p.createItemLastErrorCh
 			}
-		case <-p.ctx.Done():
-			return
+
+			p.itemCollection.put(getObjectKey(item.object), item)
+			p.Release(item.object)
+		} else {
+			select {
+			case p.createItemLastErrorCh <- err:
+				break
+			default:
+				break
+			}
 		}
 	}
 }
@@ -182,7 +185,7 @@ func (p *Pool) keepMinCapacity() {
 		delta := p.config.MinCapacity - p.itemCollection.len()
 
 		for i := 0; i < delta; i++ {
-			p.hasPendingNewItemCh <- true
+			go p.putItem()
 		}
 	}
 
