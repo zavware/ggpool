@@ -51,7 +51,7 @@ func (c *collection) acquireAll() []*item {
 	c.Lock()
 	defer c.Unlock()
 
-	res := make([]*item, len(c.idleItems))
+	var res []*item
 
 	for key, item := range c.idleItems {
 		delete(c.idleItems, key)
@@ -71,7 +71,7 @@ func (c *collection) getAll() []*item {
 	c.Lock()
 	defer c.Unlock()
 
-	res := make([]*item, len(c.allItems))
+	var res []*item
 
 	for _, item := range c.allItems {
 		res = append(res, item)
