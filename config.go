@@ -15,15 +15,15 @@ type Config struct {
 	MinCapacity int
 
 	//Duration of pool Object lifetime.
-	//When the object lifetime expires method Object.Destroy() is called.
+	//When the object lifetime expires method Object.Destroy() is called. Can be 0 - in this case item doesn't have lifetime limitation.
 	ItemLifetime time.Duration
 
 	//Item lifetime check period.
-	//This means how often pool will check that the object lifetime is expired.
+	//This means how often pool will check that the object lifetime is expired. If ItemLifetime is 0 then this setting is ignored
 	ItemLifetimeCheckPeriod time.Duration
 
-	//The timeout period of obtaining a item from the pool.
-	//If the timeout is exceeded the pool will return Temporary error.
+	//The timeout period of obtaining a item from the pool (Pool.Get()).
+	//If the timeout is exceeded the pool will return TimeoutError error.
 	Timeout time.Duration
 
 	//Factory of pool Objects.
@@ -31,21 +31,22 @@ type Config struct {
 }
 
 func (c Config) validate() error {
-	var err error
 
 	if c.Capacity < 1 {
-		err = errors.New("pool capacity value must be more then 0")
+		return errors.New("pool capacity value must be more then 0")
 	}
 
 	if c.MinCapacity < 0 {
-		err = errors.New("min pool capacity value must not be negative")
+		return errors.New("min pool capacity value must not be negative")
 	}
 
 	if c.Capacity < c.MinCapacity {
-		err = errors.New("pool capacity value cannot be less then init capacity value")
+		return errors.New("pool capacity value cannot be less then init capacity value")
 	}
 
-	//@TODO to add validation for ItemLifetime, ItemLifetimeCheckPeriod, Timeout
+	if c.ItemLifetimeCheckPeriod == 0 && c.ItemLifetime > 0 {
+		return errors.New("please specify ItemLifetimeCheckPeriod")
+	}
 
-	return err
+	return nil
 }

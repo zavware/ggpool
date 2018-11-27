@@ -25,6 +25,10 @@ func (i *item) destroy() {
 }
 
 func (i *item) isActive() bool {
+	if i.lifetime == 0 {
+		return true
+	}
+
 	expireTime := time.Now().UTC().Add(i.lifetime)
 	return i.releasedTime.Before(expireTime)
 }

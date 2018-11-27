@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+type timeoutError string
+
+func (e timeoutError) Error() string {
+	return string(e)
+}
+
+//TimeoutError is type of temporary error
+const TimeoutError = timeoutError("timeout exceeded - cannot get pool item")
+
 //Pool is a pool of generic objects
 type Pool struct {
 	config                Config
@@ -97,13 +106,19 @@ func (p *Pool) Len() int {
 }
 
 //Close clears and closes pool
-func (p *Pool) Close() {
+func (p *Pool) Close() error {
+	if p.itemCollection.len() > p.itemCollection.lenIdle() {
+		return errors.New("pool cannot be closed - there are unreleased items")
+	}
+
 	p.cancel()
 
 	items := p.itemCollection.getAll()
 	for _, item := range items {
-		go item.destroy()
+		item.destroy()
 	}
+
+	return nil
 }
 
 func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
@@ -126,7 +141,7 @@ func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
 		for {
 			select {
 			case <-timeoutCtx.Done():
-				errCh <- &TimeoutError{"timeout exceeded - cannot get pool item"}
+				errCh <- TimeoutError
 				return
 			case err := <-p.createItemLastErrorCh:
 				errCh <- err
@@ -203,6 +218,10 @@ func (p *Pool) keepMinCapacity() {
 
 //cleanUp clears inactive pool elements
 func (p *Pool) cleanUp() {
+	if p.config.ItemLifetime == 0 {
+		return
+	}
+
 	ticker := time.NewTicker(p.config.ItemLifetimeCheckPeriod)
 	defer ticker.Stop()
 
