@@ -1,6 +1,8 @@
 package ggpool
 
-import "time"
+import (
+	"time"
+)
 
 type item struct {
 	object       *interface{}
@@ -29,6 +31,6 @@ func (i *item) isActive() bool {
 		return true
 	}
 
-	expireTime := time.Now().UTC().Add(i.lifetime)
-	return i.releasedTime.Before(expireTime)
+	expireTime := i.releasedTime.Add(i.lifetime)
+	return time.Now().UTC().Before(expireTime)
 }

@@ -33,7 +33,7 @@ type Config struct {
 func (c Config) validate() error {
 
 	if c.Capacity < 1 {
-		return errors.New("pool capacity value must be more then 0")
+		return errors.New("pool capacity value must be more than 0")
 	}
 
 	if c.MinCapacity < 0 {
@@ -41,7 +41,7 @@ func (c Config) validate() error {
 	}
 
 	if c.Capacity < c.MinCapacity {
-		return errors.New("pool capacity value cannot be less then init capacity value")
+		return errors.New("pool capacity value cannot be less than init capacity value")
 	}
 
 	if c.ItemLifetimeCheckPeriod == 0 && c.ItemLifetime > 0 {

@@ -22,7 +22,7 @@ const TimeoutError = timeoutError("timeout exceeded - cannot get pool item")
 type Pool struct {
 	config                Config
 	itemReleasedCh        chan bool
-	hasPendingNewItemCh   chan bool
+	itemDestroyedCh       chan bool
 	createItemLastErrorCh chan error
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -35,24 +35,25 @@ type Pool struct {
 func NewPool(ctx context.Context, config Config) (*Pool, error) {
 	var p *Pool
 
-	if err := config.validate(); err != nil {
-		return p, err
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 
 	p = &Pool{
 		config:                config,
 		itemCollection:        newCollection(),
 		itemReleasedCh:        make(chan bool),
-		hasPendingNewItemCh:   make(chan bool),
+		itemDestroyedCh:       make(chan bool),
 		createItemLastErrorCh: make(chan error),
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:                   ctx,
+		cancel:                cancel,
 	}
 
-	go func() { p.keepMinCapacity() }()
-	go func() { p.cleanUp() }()
+	if err := config.validate(); err != nil {
+		p.Close()
+		return p, err
+	}
+
+	go p.keepMinCapacity()
+	go p.cleanUp()
 
 	return p, nil
 }
@@ -73,31 +74,12 @@ func (p *Pool) Get() (*interface{}, error) {
 
 //Release puts Object back to Pool
 func (p *Pool) Release(object *interface{}) {
-	key := getObjectKey(object)
-	item := p.itemCollection.get(key)
-
-	if item != nil {
-		item.release()
-		p.itemCollection.release(key)
-
-		select {
-		case p.itemReleasedCh <- true:
-			break
-		default:
-			break
-		}
-	}
+	p.release(object, true)
 }
 
 //Destroy removes and destroys Pool Object
 func (p *Pool) Destroy(object *interface{}) {
-	key := getObjectKey(object)
-	item := p.itemCollection.get(key)
-
-	if item != nil {
-		item.destroy()
-		p.itemCollection.remove(key)
-	}
+	p.destroy(object)
 }
 
 //Len returns pool current length
@@ -113,12 +95,50 @@ func (p *Pool) Close() error {
 
 	p.cancel()
 
+	p.itemCollection.close()
 	items := p.itemCollection.getAll()
 	for _, item := range items {
 		item.destroy()
 	}
 
 	return nil
+}
+
+func (p *Pool) release(object *interface{}, updateReleaseTime bool) {
+	key := getObjectKey(object)
+	item := p.itemCollection.get(key)
+
+	if item != nil {
+		if updateReleaseTime {
+			item.release()
+		}
+
+		p.itemCollection.release(key)
+
+		select {
+		case p.itemReleasedCh <- true:
+			break
+		default:
+			break
+		}
+	}
+}
+
+func (p *Pool) destroy(object *interface{}) {
+	key := getObjectKey(object)
+	item := p.itemCollection.get(key)
+
+	if item != nil {
+		item.destroy()
+		p.itemCollection.remove(key)
+
+		select {
+		case p.itemDestroyedCh <- true:
+			break
+		default:
+			break
+		}
+	}
 }
 
 func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
@@ -179,8 +199,11 @@ func (p *Pool) putItem() {
 				<-p.createItemLastErrorCh
 			}
 
-			p.itemCollection.put(getObjectKey(item.object), item)
-			p.Release(item.object)
+			if p.itemCollection.put(getObjectKey(item.object), item) {
+				p.release(item.object, true)
+			} else {
+				item.destroy()
+			}
 		} else {
 			select {
 			case p.createItemLastErrorCh <- err:
@@ -193,9 +216,6 @@ func (p *Pool) putItem() {
 }
 
 func (p *Pool) keepMinCapacity() {
-	ticker := time.NewTicker(time.Duration(10 * time.Second))
-	defer ticker.Stop()
-
 	keepMinCapacity := func() {
 		delta := p.config.MinCapacity - p.itemCollection.len()
 
@@ -208,7 +228,7 @@ func (p *Pool) keepMinCapacity() {
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-p.itemDestroyedCh:
 			keepMinCapacity()
 		case <-p.ctx.Done():
 			return
@@ -230,10 +250,9 @@ func (p *Pool) cleanUp() {
 		case <-ticker.C:
 			for _, item := range p.itemCollection.acquireAll() {
 				if item.isActive() {
-					p.Release(item.object)
+					p.release(item.object, false)
 				} else {
-					p.itemCollection.remove(getObjectKey(item.object))
-					go item.destroy()
+					p.destroy(item.object)
 				}
 			}
 		case <-p.ctx.Done():

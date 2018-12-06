@@ -15,10 +15,6 @@ func (c *Connection) Destroy() {
 	return
 }
 
-func (c *Connection) IsActive() bool {
-	return true
-}
-
 func (c *Connection) RunCommand() {
 	fmt.Println("run command")
 }
