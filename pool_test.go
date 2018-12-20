@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"testing"
 )
 
 type MockConnection struct {
@@ -44,4 +45,10 @@ func CreateMockConnection(f *MockFactory) (*MockConnection, error) {
 	}
 
 	return c, nil
+}
+
+func assertEqual(t *testing.T, expected interface{}, actual interface{}, message string) {
+	if expected != actual {
+		t.Fatalf("%s. Expected: %v, Actual: %v", message, expected, actual)
+	}
 }

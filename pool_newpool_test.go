@@ -3,6 +3,7 @@ package ggpool_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -158,39 +159,43 @@ func TestNewPool(t *testing.T) {
 
 		pool, err := ggpool.NewPool(context.Background(), testCase.poolConfig)
 
-		if err != nil && (testCase.expectedError != nil && testCase.expectedError.Error() != err.Error()) {
-			t.Errorf(
-				"Test case %d: - Unexpected NewPool method error: %s",
-				testIndex+1,
-				err,
+		if err != nil && testCase.expectedError != nil {
+			assertEqual(
+				t,
+				testCase.expectedError.Error(),
+				err.Error(),
+				fmt.Sprintf("Test case %d: - Unexpected NewPool method error", testIndex+1),
+			)
+		} else if err != nil {
+			assertEqual(
+				t,
+				nil,
+				err.Error(),
+				fmt.Sprintf("Test case %d: - Unexpected NewPool method error", testIndex+1),
 			)
 		}
 
 		time.Sleep(testCase.delay)
 
-		if pool.Len() != testCase.expectedPoolLen {
-			t.Errorf(
-				"Test case %d: - Unxpected pool length: %d, expected: %d",
-				testIndex+1,
-				pool.Len(),
-				testCase.expectedPoolLen,
-			)
-		}
-		if factory.createdCount != testCase.expectedCreatedCount {
-			t.Errorf(
-				"Test case %d: - Unxpected created items count: %d, expected: %d",
-				testIndex+1,
-				factory.createdCount,
-				testCase.expectedCreatedCount,
-			)
-		}
-		if factory.destroyedCount != testCase.expectedDestroyedCount {
-			t.Errorf(
-				"Test case %d: - Unxpected destroyed items count: %d, expected: %d",
-				testIndex+1,
-				factory.destroyedCount,
-				testCase.expectedDestroyedCount,
-			)
-		}
+		assertEqual(
+			t,
+			testCase.expectedPoolLen,
+			pool.Len(),
+			fmt.Sprintf("Test case %d: - Unxpected pool length", testIndex+1),
+		)
+
+		assertEqual(
+			t,
+			testCase.expectedCreatedCount,
+			factory.createdCount,
+			fmt.Sprintf("Test case %d: - Unxpected created items count", testIndex+1),
+		)
+
+		assertEqual(
+			t,
+			testCase.expectedDestroyedCount,
+			factory.destroyedCount,
+			fmt.Sprintf("Test case %d: - Unxpected destroyed items count", testIndex+1),
+		)
 	}
 }
