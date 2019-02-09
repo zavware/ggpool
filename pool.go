@@ -81,7 +81,9 @@ func (p *Pool) Release(object *interface{}) {
 
 //Destroy removes and destroys Pool Object
 func (p *Pool) Destroy(object *interface{}) {
-	p.destroy(object)
+	objectList := []*interface{}{object}
+
+	p.destroy(objectList)
 }
 
 //Len returns pool current length
@@ -126,14 +128,22 @@ func (p *Pool) release(object *interface{}, updateReleaseTime bool) {
 	}
 }
 
-func (p *Pool) destroy(object *interface{}) {
-	key := getObjectKey(object)
-	item := p.itemCollection.get(key)
+func (p *Pool) destroy(objectList []*interface{}) {
+	isItemDestroyed := false
 
-	if item != nil {
-		item.destroy()
-		p.itemCollection.remove(key)
+	for _, object := range objectList {
+		key := getObjectKey(object)
+		item := p.itemCollection.get(key)
 
+		if item != nil {
+			item.destroy()
+			p.itemCollection.remove(key)
+
+			isItemDestroyed = true
+		}
+	}
+
+	if isItemDestroyed {
 		select {
 		case p.itemDestroyedCh <- true:
 			break
@@ -258,13 +268,19 @@ func (p *Pool) cleanUp() {
 	for {
 		select {
 		case <-ticker.C:
+
+			var itemsToDestroy []*interface{}
+
 			for _, item := range p.itemCollection.acquireAll() {
 				if item.isActive() {
 					p.release(item.object, false)
 				} else {
-					p.destroy(item.object)
+					itemsToDestroy = append(itemsToDestroy, item.object)
 				}
 			}
+
+			p.destroy(itemsToDestroy)
+
 		case <-p.ctx.Done():
 			return
 		}

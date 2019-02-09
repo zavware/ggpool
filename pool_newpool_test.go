@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -38,18 +39,16 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          nil,
 	},
 
-	//@TODO: for some reason sometimes this test case fails with unexpected created items count when test runned with -race flag.
-	//to investigate
 	NewPoolTestCase{
 		description: "TestNewPool, case 2: Check keep min capacity + clean-up with expired lifetime",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             3,
-			ItemLifetime:            10 * time.Millisecond,
+			ItemLifetime:            5 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
 			Timeout:                 0,
 		},
-		delay:                  27 * time.Millisecond,
+		delay:                  14 * time.Millisecond,
 		expectedPoolLen:        3,
 		expectedCreatedCount:   9,
 		expectedDestroyedCount: 6,
@@ -154,6 +153,8 @@ var newPoolTests = []NewPoolTestCase{
 }
 
 func TestNewPool(t *testing.T) {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
 	for _, testCase := range newPoolTests {
 		factory := &MockFactory{
 			destroyedCount: 0,
@@ -186,21 +187,21 @@ func TestNewPool(t *testing.T) {
 			t,
 			testCase.expectedPoolLen,
 			pool.Len(),
-			fmt.Sprintf("%s: Unxpected pool length", testCase.description),
+			fmt.Sprintf("%s: Unexpected pool length", testCase.description),
 		)
 
 		assertEqual(
 			t,
 			testCase.expectedCreatedCount,
 			factory.GetCreatedCount(),
-			fmt.Sprintf("%s: Unxpected created items count", testCase.description),
+			fmt.Sprintf("%s: Unexpected created items count", testCase.description),
 		)
 
 		assertEqual(
 			t,
 			testCase.expectedDestroyedCount,
 			factory.GetDestroyedCount(),
-			fmt.Sprintf("%s: Unxpected destroyed items count", testCase.description),
+			fmt.Sprintf("%s: Unexpected destroyed items count", testCase.description),
 		)
 
 		pool.Close()

@@ -45,14 +45,14 @@ func TestGet(t *testing.T) {
 		t,
 		3,
 		factory.GetCreatedCount(),
-		"TestGet: Unxpected created items count",
+		"TestGet: Unexpected created items count",
 	)
 
 	assertEqual(
 		t,
 		0,
 		factory.GetDestroyedCount(),
-		"TestGet: Unxpected destroyed items count",
+		"TestGet: Unexpected destroyed items count",
 	)
 
 	pool.Close()
