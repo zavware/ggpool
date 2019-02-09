@@ -29,6 +29,7 @@ type Pool struct {
 
 	sync.RWMutex
 	itemCollection *collection
+	isInitialized  bool
 }
 
 //NewPool returns a new Pool instanse
@@ -39,12 +40,13 @@ func NewPool(ctx context.Context, config Config) (*Pool, error) {
 
 	p = &Pool{
 		config:                config,
-		itemCollection:        newCollection(),
 		itemReleasedCh:        make(chan bool),
 		itemDestroyedCh:       make(chan bool),
 		createItemLastErrorCh: make(chan error),
 		ctx:                   ctx,
 		cancel:                cancel,
+		itemCollection:        newCollection(),
+		isInitialized:         false,
 	}
 
 	if err := config.validate(); err != nil {
@@ -150,12 +152,18 @@ func (p *Pool) getIdleItemWithTimeout(timeout time.Duration) (*item, error) {
 
 	//waiting for idle item
 	go func() {
-		//try to acquire item immediately
-		if item := p.itemCollection.acquire(); item != nil {
-			itemCh <- item
-			return
+		p.RLock()
+		isPollInitialized := p.isInitialized
+		p.RUnlock()
+
+		if isPollInitialized {
+			//try to acquire item immediately
+			if item := p.itemCollection.acquire(); item != nil {
+				itemCh <- item
+				return
+			}
+			go p.putItem()
 		}
-		go p.putItem()
 
 		//waiting for idle item or timeout
 		for {
@@ -201,6 +209,8 @@ func (p *Pool) putItem() {
 
 			if p.itemCollection.put(getObjectKey(item.object), item) {
 				p.release(item.object, true)
+				//we assume that pool is initialized when a first object has been added to pool collection
+				p.isInitialized = true
 			} else {
 				item.destroy()
 			}

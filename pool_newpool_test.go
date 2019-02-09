@@ -11,6 +11,7 @@ import (
 )
 
 type NewPoolTestCase struct {
+	description            string
 	poolConfig             ggpool.Config
 	delay                  time.Duration
 	expectedPoolLen        int
@@ -20,14 +21,15 @@ type NewPoolTestCase struct {
 }
 
 var newPoolTests = []NewPoolTestCase{
-	//Test case 1: Check keep min capacity
+
 	NewPoolTestCase{
+		description: "TestNewPool, case 1: Check keep min capacity",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             3,
 			ItemLifetime:            20 * time.Second,
 			ItemLifetimeCheckPeriod: 3 * time.Second,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        3,
@@ -36,30 +38,32 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          nil,
 	},
 
-	//Test case 2: Check keep min capacity + clean-up with expired lifetime
+	//@TODO: for some reason sometimes this test case fails with unexpected created items count when test runned with -race flag.
+	//to investigate
 	NewPoolTestCase{
+		description: "TestNewPool, case 2: Check keep min capacity + clean-up with expired lifetime",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             3,
-			ItemLifetime:            4 * time.Millisecond,
+			ItemLifetime:            10 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
-		delay:                  11 * time.Millisecond,
+		delay:                  27 * time.Millisecond,
 		expectedPoolLen:        3,
 		expectedCreatedCount:   9,
 		expectedDestroyedCount: 6,
 		expectedError:          nil,
 	},
 
-	//Test case 3: Check keep min capacity + infinity item lifetime
 	NewPoolTestCase{
+		description: "TestNewPool, case 3: Check keep min capacity + infinity item lifetime",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             3,
 			ItemLifetime:            0,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  4 * time.Millisecond,
 		expectedPoolLen:        3,
@@ -68,14 +72,14 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          nil,
 	},
 
-	//Test case 4: Check keep min capacity for zero min capacity
 	NewPoolTestCase{
+		description: "TestNewPool, case 4: Check keep min capacity for zero min capacity",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             0,
 			ItemLifetime:            20 * time.Second,
 			ItemLifetimeCheckPeriod: 3 * time.Second,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        0,
@@ -84,14 +88,14 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          nil,
 	},
 
-	//Test case 5: Check capacity validation
 	NewPoolTestCase{
+		description: "TestNewPool, case 5: Check capacity validation",
 		poolConfig: ggpool.Config{
 			Capacity:                0,
 			MinCapacity:             6,
 			ItemLifetime:            4 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        0,
@@ -100,14 +104,14 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          errors.New("pool capacity value must be more than 0"),
 	},
 
-	//Test case 6: Check min capacity validation
 	NewPoolTestCase{
+		description: "TestNewPool, case 6: Check min capacity validation",
 		poolConfig: ggpool.Config{
 			Capacity:                1,
 			MinCapacity:             -1,
 			ItemLifetime:            4 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        0,
@@ -116,14 +120,14 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          errors.New("min pool capacity value must not be negative"),
 	},
 
-	//Test case 7: Check that capacity cannot be less than min capacty
 	NewPoolTestCase{
+		description: "TestNewPool, case 7: Check that capacity cannot be less than min capacty",
 		poolConfig: ggpool.Config{
 			Capacity:                3,
 			MinCapacity:             5,
 			ItemLifetime:            4 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 1 * time.Millisecond,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        0,
@@ -132,14 +136,14 @@ var newPoolTests = []NewPoolTestCase{
 		expectedError:          errors.New("pool capacity value cannot be less than init capacity value"),
 	},
 
-	//Test case 8: Check ItemLifetimeCheckPeriod validation
 	NewPoolTestCase{
+		description: "TestNewPool, case 8: Check ItemLifetimeCheckPeriod validation",
 		poolConfig: ggpool.Config{
 			Capacity:                5,
 			MinCapacity:             3,
 			ItemLifetime:            4 * time.Millisecond,
 			ItemLifetimeCheckPeriod: 0,
-			Timeout:                 3 * time.Second,
+			Timeout:                 0,
 		},
 		delay:                  2 * time.Millisecond,
 		expectedPoolLen:        0,
@@ -150,7 +154,7 @@ var newPoolTests = []NewPoolTestCase{
 }
 
 func TestNewPool(t *testing.T) {
-	for testIndex, testCase := range newPoolTests {
+	for _, testCase := range newPoolTests {
 		factory := &MockFactory{
 			destroyedCount: 0,
 			createdCount:   0,
@@ -164,38 +168,41 @@ func TestNewPool(t *testing.T) {
 				t,
 				testCase.expectedError.Error(),
 				err.Error(),
-				fmt.Sprintf("Test case %d: - Unexpected NewPool method error", testIndex+1),
+				fmt.Sprintf("%s: Unexpected NewPool method error", testCase.description),
 			)
 		} else if err != nil {
 			assertEqual(
 				t,
 				nil,
 				err.Error(),
-				fmt.Sprintf("Test case %d: - Unexpected NewPool method error", testIndex+1),
+				fmt.Sprintf("%s: Unexpected NewPool method error", testCase.description),
 			)
 		}
 
+		//we need to wait for pool items initialization
 		time.Sleep(testCase.delay)
 
 		assertEqual(
 			t,
 			testCase.expectedPoolLen,
 			pool.Len(),
-			fmt.Sprintf("Test case %d: - Unxpected pool length", testIndex+1),
+			fmt.Sprintf("%s: Unxpected pool length", testCase.description),
 		)
 
 		assertEqual(
 			t,
 			testCase.expectedCreatedCount,
-			factory.createdCount,
-			fmt.Sprintf("Test case %d: - Unxpected created items count", testIndex+1),
+			factory.GetCreatedCount(),
+			fmt.Sprintf("%s: Unxpected created items count", testCase.description),
 		)
 
 		assertEqual(
 			t,
 			testCase.expectedDestroyedCount,
-			factory.destroyedCount,
-			fmt.Sprintf("Test case %d: - Unxpected destroyed items count", testIndex+1),
+			factory.GetDestroyedCount(),
+			fmt.Sprintf("%s: Unxpected destroyed items count", testCase.description),
 		)
+
+		pool.Close()
 	}
 }

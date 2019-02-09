@@ -35,6 +35,20 @@ func (f *MockFactory) Create(ctx context.Context) (interface{}, error) {
 	return c, err
 }
 
+func (f *MockFactory) GetCreatedCount() int {
+	f.RLock()
+	defer f.RUnlock()
+
+	return f.createdCount
+}
+
+func (f *MockFactory) GetDestroyedCount() int {
+	f.RLock()
+	defer f.RUnlock()
+
+	return f.destroyedCount
+}
+
 func CreateMockConnection(f *MockFactory) (*MockConnection, error) {
 	f.Lock()
 	defer f.Unlock()
