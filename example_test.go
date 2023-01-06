@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alex-zz/ggpool"
+	"github.com/zav0x/ggpool"
 )
 
-//TODO to create real connection?
+// TODO to create real connection?
 type Connection struct{}
 
 func (c *Connection) Destroy() {

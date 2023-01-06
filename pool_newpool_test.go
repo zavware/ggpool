@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alex-zz/ggpool"
+	"github.com/zav0x/ggpool"
 )
 
 type NewPoolTestCase struct {
